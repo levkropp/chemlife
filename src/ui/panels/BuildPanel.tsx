@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { getAllBuildingDefs } from '../../data/buildings';
-import { TILE_MAP, MAP_COLS, MAP_ROWS } from '../../game/constants';
 import { BuildingTypeId } from '../../types';
 import { formatMoney } from '../../utils/chemistry';
 
 const base = import.meta.env.BASE_URL;
-const BUILDING_TEXTURES: Partial<Record<BuildingTypeId, string>> = {
+
+// Machine overlay textures (drawn on top of the steel casing)
+const MACHINE_OVERLAY: Partial<Record<BuildingTypeId, string>> = {
   hot_plate:        `${base}textures/machines/electric_oven.png`,
   reaction_vessel:  `${base}textures/machines/chemical_reactor.png`,
   distillation_kit: `${base}textures/machines/distillery.png`,
@@ -14,40 +15,38 @@ const BUILDING_TEXTURES: Partial<Record<BuildingTypeId, string>> = {
   fume_hood:        `${base}textures/machines/mixer.png`,
 };
 
+const CASING_URL = `${base}textures/machines/casing_steel.png`;
+
+function BuildingIcon({ typeId, accentColor }: { typeId: BuildingTypeId; accentColor: string }) {
+  const overlay = MACHINE_OVERLAY[typeId];
+  return (
+    <div className="build-icon-wrap">
+      {/* Casing base */}
+      <div className="build-icon-layer" style={{ backgroundImage: `url(${CASING_URL})` }} />
+      {/* Machine overlay */}
+      {overlay
+        ? <div className="build-icon-layer" style={{ backgroundImage: `url(${overlay})` }} />
+        : <div className="build-icon-layer" style={{ background: accentColor, opacity: 0.6 }} />
+      }
+    </div>
+  );
+}
+
 export function BuildPanel() {
   const store = useGameStore();
-  const { player, buildings, gameTime } = store;
+  const { player, buildings, pendingPlacement } = store;
   const [selectedType, setSelectedType] = useState<BuildingTypeId | null>(null);
-  const [tileX, setTileX] = useState('');
-  const [tileY, setTileY] = useState('');
-  const [feedback, setFeedback] = useState<{ msg: string; ok: boolean } | null>(null);
 
   const allDefs = getAllBuildingDefs();
 
-  function msg(text: string, ok: boolean) {
-    setFeedback({ msg: text, ok });
-    setTimeout(() => setFeedback(null), 3000);
+  function handlePlace() {
+    if (!selectedType) return;
+    store.setPendingPlacement(selectedType);
   }
 
-  // Suggest a tile near the player
-  const playerTileX = Math.floor(store.player.pixelX / 48);
-  const playerTileY = Math.floor(store.player.pixelY / 48);
-
-  function handlePlace() {
-    if (!selectedType) return msg('Select a building type', false);
-    const x = parseInt(tileX);
-    const y = parseInt(tileY);
-    if (isNaN(x) || isNaN(y)) return msg('Enter valid tile coordinates', false);
-
-    const id = store.placeBuilding(selectedType, x, y);
-    if (id) {
-      msg(`Placed! Building ID: ${id.slice(0, 8)}`, true);
-      setSelectedType(null);
-      setTileX('');
-      setTileY('');
-    } else {
-      msg('Cannot place here. Check: tile is walkable, not occupied, correct indoor/outdoor rule, and you have enough funds.', false);
-    }
+  function handleCancel() {
+    store.setPendingPlacement(null);
+    setSelectedType(null);
   }
 
   return (
@@ -57,42 +56,38 @@ export function BuildPanel() {
       </div>
 
       <div className="panel-content">
-        {feedback && (
-          <div className={`feedback-bar ${feedback.ok ? 'ok' : 'err'}`}>{feedback.msg}</div>
+        {pendingPlacement ? (
+          <div className="placement-mode-bar">
+            <span>
+              Hover over the map and click to place{' '}
+              <strong>{allDefs.find(d => d.id === pendingPlacement)?.name}</strong>
+            </span>
+            <button className="btn-secondary" onClick={handleCancel}>Cancel [Esc]</button>
+          </div>
+        ) : (
+          <p className="muted small">Select a building below, then click Place to drop it on the map.</p>
         )}
-
-        <p className="muted small">
-          Select a building, enter tile coordinates, and click Place.
-          Your player is at tile ({playerTileX}, {playerTileY}).
-          Buildings bought from ChemBay are placed instantly.
-        </p>
 
         <div className="building-grid">
           {allDefs.map(def => {
             const canAfford = player.money >= def.priceUsd;
+            const isSelected = selectedType === def.id;
+            const isPending  = pendingPlacement === def.id;
             return (
               <div
                 key={def.id}
-                className={`building-card ${selectedType === def.id ? 'selected' : ''} ${!canAfford ? 'unaffordable' : ''}`}
-                onClick={() => canAfford && setSelectedType(def.id as BuildingTypeId)}
+                className={`building-card ${isSelected || isPending ? 'selected' : ''} ${!canAfford ? 'unaffordable' : ''}`}
+                onClick={() => canAfford && !pendingPlacement && setSelectedType(def.id as BuildingTypeId)}
               >
-                <div
-                  className="building-icon-tex"
-                  style={{ backgroundImage: `url(${BUILDING_TEXTURES[def.id as BuildingTypeId] ?? ''})`, background: BUILDING_TEXTURES[def.id as BuildingTypeId] ? undefined : def.accentColor }}
-                  title={def.shortLabel}
-                />
+                <BuildingIcon typeId={def.id as BuildingTypeId} accentColor={def.accentColor} />
                 <div className="building-info">
                   <div className="building-name">{def.name}</div>
                   <div className="building-price">{formatMoney(def.priceUsd)}</div>
                   <div className="building-size muted">
-                    {def.tileWidth}×{def.tileHeight} tile{def.tileWidth * def.tileHeight > 1 ? 's' : ''}
+                    {def.tileWidth}×{def.tileHeight}
                     {' · '}
-                    {[
-                      def.canPlaceIndoor ? 'indoor' : null,
-                      def.canPlaceOutdoor ? 'outdoor' : null,
-                    ]
-                      .filter(Boolean)
-                      .join(' / ')}
+                    {[def.canPlaceIndoor && 'indoor', def.canPlaceOutdoor && 'outdoor']
+                      .filter(Boolean).join(' / ')}
                   </div>
                   <div className="building-desc muted small">{def.description}</div>
                 </div>
@@ -101,66 +96,36 @@ export function BuildPanel() {
           })}
         </div>
 
-        {selectedType && (
-          <div className="place-form">
-            <h4 className="section-label">
-              Place: {allDefs.find(d => d.id === selectedType)?.name}
-            </h4>
-            <div className="form-row">
-              <label>Tile X (col)</label>
-              <input
-                className="input"
-                type="number"
-                min="1"
-                max={MAP_COLS - 2}
-                placeholder={String(playerTileX)}
-                value={tileX}
-                onChange={e => setTileX(e.target.value)}
-              />
-            </div>
-            <div className="form-row">
-              <label>Tile Y (row)</label>
-              <input
-                className="input"
-                type="number"
-                min="1"
-                max={MAP_ROWS - 2}
-                placeholder={String(playerTileY + 1)}
-                value={tileY}
-                onChange={e => setTileY(e.target.value)}
-              />
-            </div>
-            <p className="muted small">
-              Tip: outdoor tiles are rows 1–3, 9–12 and cols 1–3, 9–12 (outside the house). Indoor: cols 5–7, rows 5–7.
-            </p>
-            <div className="btn-row">
-              <button className="btn-primary" onClick={handlePlace}>
-                Place ({formatMoney(allDefs.find(d => d.id === selectedType)?.priceUsd ?? 0)})
-              </button>
-              <button className="btn-secondary" onClick={() => setSelectedType(null)}>
-                Cancel
-              </button>
-            </div>
+        {selectedType && !pendingPlacement && (
+          <div className="btn-row" style={{ marginTop: 8 }}>
+            <button
+              className="btn-primary"
+              onClick={handlePlace}
+              disabled={!allDefs.find(d => d.id === selectedType) || player.money < (allDefs.find(d => d.id === selectedType)?.priceUsd ?? 0)}
+            >
+              Place on map ({formatMoney(allDefs.find(d => d.id === selectedType)?.priceUsd ?? 0)})
+            </button>
+            <button className="btn-secondary" onClick={() => setSelectedType(null)}>
+              Deselect
+            </button>
           </div>
         )}
 
         {buildings.length > 0 && (
           <>
-            <h4 className="section-label">Placed Buildings</h4>
+            <h4 className="section-label" style={{ marginTop: 12 }}>Placed Buildings</h4>
             {buildings.map(b => {
               const def = allDefs.find(d => d.id === b.typeId)!;
               return (
                 <div key={b.id} className="placed-building-row">
-                  <div className="building-dot" style={{ background: def.accentColor }} />
-                  <span>{def.name}</span>
-                  <span className="muted">@ ({b.tileX}, {b.tileY})</span>
+                  <div className="building-dot" style={{ background: def?.accentColor }} />
+                  <span>{def?.name}</span>
+                  <span className="muted">({b.tileX}, {b.tileY})</span>
                   <button
                     className="btn-danger-sm"
                     onClick={() => store.removeBuilding(b.id)}
-                    title="Remove building (no refund)"
-                  >
-                    ✕
-                  </button>
+                    title="Remove (no refund)"
+                  >✕</button>
                 </div>
               );
             })}

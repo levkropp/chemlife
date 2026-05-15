@@ -244,6 +244,7 @@ function createInitialState(): GameState {
     },
     openWindows: ['tutorial'],
     selectedBuildingId: null,
+    pendingPlacement: null,
   };
 }
 
@@ -272,6 +273,7 @@ interface GameStore extends GameState {
   closeWindow: (id: PanelId) => void;
   bringToFront: (id: PanelId) => void;
   setSelectedBuilding: (id: string | null) => void;
+  setPendingPlacement: (typeId: BuildingTypeId | null) => void;
 
   completeTutorialStep: (stepId: string) => void;
   advanceTutorial: () => void;
@@ -615,6 +617,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     openWindows: [...s.openWindows.filter(w => w !== id), id],
   })),
   setSelectedBuilding: (id) => set({ selectedBuildingId: id }),
+  setPendingPlacement: (typeId) => set({ pendingPlacement: typeId }),
 
   // ─── Tutorial ─────────────────────────────────────────────────────────────
   completeTutorialStep: (stepId) =>

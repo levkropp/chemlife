@@ -12,7 +12,7 @@ import {
   pixelToTile,
 } from '../constants';
 import { getBuildingDef } from '../../data/buildings';
-import { PlacedBuilding } from '../../types';
+import { BuildingTypeId, PlacedBuilding } from '../../types';
 
 export class GameScene extends Phaser.Scene {
   private player!: Phaser.GameObjects.Rectangle;
@@ -21,6 +21,8 @@ export class GameScene extends Phaser.Scene {
   private buildingLabels: Map<string, Phaser.GameObjects.Text> = new Map();
   private buildingRects: Map<string, Phaser.GameObjects.Rectangle> = new Map();
   private interactHint!: Phaser.GameObjects.Text;
+  private placementGhost!: Phaser.GameObjects.Graphics;
+  private placementHint!: Phaser.GameObjects.Text;
 
   private keys!: {
     W: Phaser.Input.Keyboard.Key;
@@ -46,10 +48,10 @@ export class GameScene extends Phaser.Scene {
 
   preload() {
     const base = import.meta.env.BASE_URL;
-    this.load.image('tile_outdoor', `${base}textures/tiles/stone_floor.png`);
-    this.load.image('tile_indoor',  `${base}textures/tiles/wood_floor.png`);
-    this.load.image('tile_fence',   `${base}textures/machines/casing_steel.png`);
-    this.load.image('tile_wall',    `${base}textures/machines/casing_stainless.png`);
+    this.load.image('tile_grass',  `${base}textures/tiles/grass.png`);
+    this.load.image('tile_indoor', `${base}textures/tiles/wood_floor.png`);
+    this.load.image('tile_wall',   `${base}textures/machines/casing_stainless.png`);
+    this.load.image('tile_fence_overlay', `${base}textures/tiles/fence_wood.png`);
   }
 
   create() {
@@ -74,36 +76,40 @@ export class GameScene extends Phaser.Scene {
     this.handleMovement(delta);
     this.detectNearbyBuilding();
     this.syncPlayerPositionToStore();
-
-    // Drive game time
+    this.updatePlacementMode();
     useGameStore.getState().tick(delta);
   }
 
   // ─── Tile map ─────────────────────────────────────────────────────────────
 
   private drawTileMap() {
-    // Sprite tiles — pixelated GT:NH textures scaled to TILE_SIZE
     for (let row = 0; row < MAP_ROWS; row++) {
       for (let col = 0; col < MAP_COLS; col++) {
         const tile = TILE_MAP[row][col];
-        let texKey: string;
+        const cx = col * TILE_SIZE + TILE_SIZE / 2;
+        const cy = row * TILE_SIZE + TILE_SIZE / 2;
+
         switch (tile.type) {
-          case 'indoor':     texKey = 'tile_indoor';  break;
-          case 'fence':      texKey = 'tile_fence';   break;
-          case 'house_wall': texKey = 'tile_wall';    break;
-          case 'door':       texKey = 'tile_outdoor'; break;
-          default:           texKey = 'tile_outdoor'; break;
+          case 'outdoor':
+          case 'door':
+            this.add.image(cx, cy, 'tile_grass').setDisplaySize(TILE_SIZE, TILE_SIZE);
+            break;
+          case 'indoor':
+            this.add.image(cx, cy, 'tile_indoor').setDisplaySize(TILE_SIZE, TILE_SIZE);
+            break;
+          case 'house_wall':
+            this.add.image(cx, cy, 'tile_wall').setDisplaySize(TILE_SIZE, TILE_SIZE);
+            break;
+          case 'fence':
+            // Grass base + fence overlay
+            this.add.image(cx, cy, 'tile_grass').setDisplaySize(TILE_SIZE, TILE_SIZE);
+            this.add.image(cx, cy, 'tile_fence_overlay').setDisplaySize(TILE_SIZE, TILE_SIZE);
+            break;
         }
-        const img = this.add.image(
-          col * TILE_SIZE + TILE_SIZE / 2,
-          row * TILE_SIZE + TILE_SIZE / 2,
-          texKey
-        );
-        img.setDisplaySize(TILE_SIZE, TILE_SIZE);
       }
     }
 
-    // Overlay graphics: grid lines, house outline, door marker
+    // Grid lines, house outline, door marker
     const g = this.add.graphics();
 
     g.lineStyle(1, COLORS.base01, 0.12);
@@ -127,10 +133,59 @@ export class GameScene extends Phaser.Scene {
     );
 
     this.add.text(6 * TILE_SIZE + TILE_SIZE / 2, 3.5 * TILE_SIZE, 'HOME', {
-      fontSize: '10px',
-      color: '#93a1a1',
-      fontFamily: 'monospace',
+      fontSize: '10px', color: '#93a1a1', fontFamily: 'monospace',
     }).setOrigin(0.5, 0.5);
+  }
+
+  // ─── Placement ghost ───────────────────────────────────────────────────────
+
+  private drawPlacementGhost(tileX: number, tileY: number, typeId: BuildingTypeId, buildings: PlacedBuilding[]) {
+    const def = getBuildingDef(typeId);
+    if (!def) return;
+
+    let valid = true;
+    outer:
+    for (let dy = 0; dy < def.tileHeight; dy++) {
+      for (let dx = 0; dx < def.tileWidth; dx++) {
+        const tile = TILE_MAP[tileY + dy]?.[tileX + dx];
+        if (!tile || !tile.walkable) { valid = false; break outer; }
+        const occupied = buildings.some(b => {
+          const bd = getBuildingDef(b.typeId);
+          if (!bd) return false;
+          return (tileX + dx >= b.tileX && tileX + dx < b.tileX + bd.tileWidth &&
+                  tileY + dy >= b.tileY && tileY + dy < b.tileY + bd.tileHeight);
+        });
+        if (occupied) { valid = false; break outer; }
+        if (tile.isIndoor && !def.canPlaceIndoor) { valid = false; break outer; }
+        if (!tile.isIndoor && !def.canPlaceOutdoor) { valid = false; break outer; }
+      }
+    }
+
+    const color = valid ? 0x859900 : 0xdc322f;
+    this.placementGhost.clear();
+    this.placementGhost.fillStyle(color, 0.35);
+    this.placementGhost.fillRect(tileX * TILE_SIZE, tileY * TILE_SIZE, def.tileWidth * TILE_SIZE, def.tileHeight * TILE_SIZE);
+    this.placementGhost.lineStyle(2, color, 0.9);
+    this.placementGhost.strokeRect(tileX * TILE_SIZE, tileY * TILE_SIZE, def.tileWidth * TILE_SIZE, def.tileHeight * TILE_SIZE);
+  }
+
+  private updatePlacementMode() {
+    const state = useGameStore.getState();
+    if (!state.pendingPlacement) {
+      this.placementGhost.clear();
+      this.placementHint.setVisible(false);
+      return;
+    }
+
+    const def = getBuildingDef(state.pendingPlacement);
+    this.placementHint.setText(`Placing: ${def?.name ?? state.pendingPlacement}  ·  click to place  ·  [Esc] cancel`);
+    this.placementHint.setVisible(true);
+
+    const ptr = this.input.activePointer;
+    const worldPt = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
+    const tileX = Math.floor(worldPt.x / TILE_SIZE);
+    const tileY = Math.floor(worldPt.y / TILE_SIZE);
+    this.drawPlacementGhost(tileX, tileY, state.pendingPlacement, state.buildings);
   }
 
   // ─── Buildings ─────────────────────────────────────────────────────────────
@@ -352,6 +407,31 @@ export class GameScene extends Phaser.Scene {
       padding: { x: 4, y: 2 },
       fontFamily: 'monospace',
     }).setOrigin(0.5, 1).setDepth(20).setVisible(false);
+
+    this.placementGhost = this.add.graphics().setDepth(9);
+
+    this.placementHint = this.add.text(this.scale.width / 2, 14, '', {
+      fontSize: '11px',
+      color: '#fdf6e3',
+      backgroundColor: '#859900dd',
+      padding: { x: 10, y: 5 },
+      fontFamily: 'monospace',
+    }).setScrollFactor(0).setOrigin(0.5, 0).setDepth(50).setVisible(false);
+
+    this.scale.on('resize', (size: Phaser.Structs.Size) => {
+      this.placementHint.setX(size.width / 2);
+    });
+
+    this.input.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+      if (ptr.button !== 0) return;
+      const state = useGameStore.getState();
+      if (!state.pendingPlacement) return;
+      const worldPt = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
+      const tileX = Math.floor(worldPt.x / TILE_SIZE);
+      const tileY = Math.floor(worldPt.y / TILE_SIZE);
+      const id = useGameStore.getState().placeBuilding(state.pendingPlacement, tileX, tileY);
+      if (id) useGameStore.getState().setPendingPlacement(null);
+    });
   }
 
   // ─── Keys ─────────────────────────────────────────────────────────────────
@@ -377,6 +457,7 @@ export class GameScene extends Phaser.Scene {
     kb.on('keydown-B', () => useGameStore.getState().toggleWindow('build'));
     kb.on('keydown-I', () => useGameStore.getState().toggleWindow('inventory'));
     kb.on('keydown-P', () => useGameStore.getState().togglePause());
+    kb.on('keydown-ESC', () => useGameStore.getState().setPendingPlacement(null));
     kb.on('keydown-ONE', () => useGameStore.getState().setSpeed(1));
     kb.on('keydown-TWO', () => useGameStore.getState().setSpeed(2));
     kb.on('keydown-THREE', () => useGameStore.getState().setSpeed(3));

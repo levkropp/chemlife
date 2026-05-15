@@ -207,4 +207,5 @@ export interface GameState {
   // UI state — ordered array; last element = highest z-index (topmost window)
   openWindows: PanelId[];
   selectedBuildingId: string | null;
+  pendingPlacement: BuildingTypeId | null;
 }
