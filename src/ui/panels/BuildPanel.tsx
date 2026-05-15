@@ -5,12 +5,13 @@ import { TILE_MAP, MAP_COLS, MAP_ROWS } from '../../game/constants';
 import { BuildingTypeId } from '../../types';
 import { formatMoney } from '../../utils/chemistry';
 
+const base = import.meta.env.BASE_URL;
 const BUILDING_TEXTURES: Partial<Record<BuildingTypeId, string>> = {
-  hot_plate:       '/textures/machines/electric_oven.png',
-  reaction_vessel: '/textures/machines/chemical_reactor.png',
-  distillation_kit:'/textures/machines/distillery.png',
-  storage_cabinet: '/textures/machines/storage_cabinet.png',
-  fume_hood:       '/textures/machines/mixer.png',
+  hot_plate:        `${base}textures/machines/electric_oven.png`,
+  reaction_vessel:  `${base}textures/machines/chemical_reactor.png`,
+  distillation_kit: `${base}textures/machines/distillery.png`,
+  storage_cabinet:  `${base}textures/machines/storage_cabinet.png`,
+  fume_hood:        `${base}textures/machines/mixer.png`,
 };
 
 export function BuildPanel() {

@@ -45,10 +45,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.image('tile_outdoor', '/textures/tiles/stone_floor.png');
-    this.load.image('tile_indoor',  '/textures/tiles/wood_floor.png');
-    this.load.image('tile_fence',   '/textures/machines/casing_steel.png');
-    this.load.image('tile_wall',    '/textures/machines/casing_stainless.png');
+    const base = import.meta.env.BASE_URL;
+    this.load.image('tile_outdoor', `${base}textures/tiles/stone_floor.png`);
+    this.load.image('tile_indoor',  `${base}textures/tiles/wood_floor.png`);
+    this.load.image('tile_fence',   `${base}textures/machines/casing_steel.png`);
+    this.load.image('tile_wall',    `${base}textures/machines/casing_stainless.png`);
   }
 
   create() {
